@@ -1,0 +1,98 @@
+# ===================================================================
+# Root .gitignore — 毕设 monorepo (SOFT-rear + web + scripts)
+# ===================================================================
+
+# ---------- OS / editor ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# ---------- IDE ----------
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+.settings/
+.classpath
+.project
+.factorypath
+.apt_generated
+.springBeans
+.sts4-cache
+
+# ---------- Logs ----------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ===================================================================
+# Backend: SOFT-rear (Spring Boot + Maven)
+# ===================================================================
+SOFT-rear/target/
+SOFT-rear/build/
+SOFT-rear/!**/src/main/**/target/
+SOFT-rear/!**/src/test/**/target/
+SOFT-rear/.mvn/wrapper/maven-wrapper.jar
+SOFT-rear/HELP.md
+
+# Uploaded runtime assets — keep the folder, skip the payload
+SOFT-rear/upload/*
+!SOFT-rear/upload/.gitkeep
+
+# Local / secret Spring config — never commit
+SOFT-rear/src/main/resources/application-local.properties
+SOFT-rear/src/main/resources/application-secret.properties
+SOFT-rear/src/main/resources/application-*.local.properties
+
+# ===================================================================
+# Frontend: web (Vite + Vue)
+# ===================================================================
+web/node_modules/
+web/dist/
+web/dist-ssr/
+web/coverage/
+web/*.local
+web/.vite/
+web/cypress/videos/
+web/cypress/screenshots/
+*.tsbuildinfo
+
+# ===================================================================
+# Python / scratch
+# ===================================================================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ===================================================================
+# Dev runtime scripts state
+# ===================================================================
+.run/*.log
+.run/dev-processes.json
+
+# ===================================================================
+# Claude Code local state
+# ===================================================================
+.claude/
+
+# ===================================================================
+# Misc
+# ===================================================================
+*.bak
+*.tmp
