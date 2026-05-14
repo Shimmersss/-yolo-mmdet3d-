@@ -106,3 +106,79 @@
 - 将 MMDet3D 的 KITTI 自动匹配规则恢复为昨晚那版的宽松逻辑：先按左图 `stem` 找同名图片，再在数据集根目录里递归找对应的 `velodyne/*.bin` 和 `calib/*.txt`。
 - 不再强制要求 `bin` 和 `calib` 必须出现在同一个父目录，避免 `Missing sibling KITTI files` 直接卡死。
 - 当前保留的投影角点计算仍然是按 8000 服务一致的中心式 3D 框定义，后续如果还偏，再单独拆几何公式继续调。
+
+## 2026-05-14 MMDet3D training/testing 投影修复
+
+### 问题现象
+
+- `F:\YOLO\kitty\testing\image_2` 下的图片检测和投影基本正常。
+- `F:\YOLO\kitty\training\image_2` 下的图片不好用，表现为自动匹配不稳或投影框偏斜。
+- 排查后确认，这不是单一公式问题，而是路径匹配、calib 传递、3D 框角点约定三个问题叠加。
+
+### 根因
+
+- 后端主配置曾经默认指向本机绝对路径 `F:/YOLO/kitty/testing`，搜索范围天然偏向 testing。选择 training 图片时，后端要么找不到同 split 的点云/calib，要么在同名 stem 存在时误配到 testing。
+- 浏览器单文件上传不会暴露真实绝对路径。如果只上传 `000123.png`，后端无法知道它来自 `training/image_2` 还是 `testing/image_2`。
+- 后端虽然已经把匹配到的 `calib_file` 传给 8000 端，但 8000 端 FastAPI 接口之前没有声明 `calib_file` 参数，内部图像可视化仍可能走固定 testing calib fallback。
+- 旧投影说明里把 MMDet3D 的 LiDAR 3D box 记成“几何中心 + z 方向 ±dz/2”。这与 MMDet3D `LiDARInstance3DBoxes` 的默认约定不一致；MMDet3D 的 LiDAR box 原点是底部中心，相对原点为 `(0.5, 0.5, 0)`。
+
+### 本次代码修复
+
+- `web/src/components/ImageUpload.vue`
+  - MMDet3D 模式增加 KITTI split 选择：`training` / `testing`。
+  - 当浏览器没有 `webkitRelativePath` 时，前端构造相对 hint：`training/image_2/{filename}` 或 `testing/image_2/{filename}`。
+  - 这样前端不再传本机盘符路径，后端也能区分同名 training/testing 样本。
+
+- `SOFT-rear/src/main/resources/application.properties`
+  - 主配置改为 `detection.kitti-dataset-root=${KITTI_DATASET_ROOT:}`。
+  - 不再在通用配置中写死 `F:/YOLO/kitty` 或 `F:/YOLO/kitty/testing`。
+
+- `SOFT-rear/src/main/resources/application-local.properties`
+  - 为当前本机保留 local 覆盖：`detection.kitti-dataset-root=F:/YOLO/kitty`。
+  - 迁移到其他机器时，只需要改 local 配置或环境变量 `KITTI_DATASET_ROOT`。
+
+- `SOFT-rear/src/main/java/org/soft/softrear/service/dify/DetectionPipelineService.java`
+  - 新增可移植 KITTI 根目录解析：绝对路径直接用，相对路径会相对后端工作目录和仓库根目录解析。
+  - 未配置根目录时，尝试 `kitti`、`data/kitti`、`../kitti`、`../data/kitti`、`../kitty`、`../data/kitty` 等相对候选。
+  - 合法根目录必须包含 `image_2/velodyne/calib` 或 `training/testing` 结构。
+  - 自动匹配优先使用 `imagePathHint` 指到的 split，再回退到 `training`、`testing`、根目录搜索。
+  - 投影时优先读取 8000 端返回的 `corners_3d`；没有角点时才兜底由 `bbox_3d` 生成。
+  - LiDAR box 兜底角点修正为 MMDet3D 底部中心约定，不再使用几何中心 `±dz/2`。
+  - 支持 `box_type_3d` / `coord_type` 中声明 Camera 坐标，避免相机坐标角点被重复做 LiDAR -> Camera 变换。
+
+- `F:/YOLO/kitty/fastapi_realtime_infer/app/detector.py`
+  - 改为使用 `pred.bboxes_3d.corners` 返回 MMDet3D 原生 8 角点。
+  - 每个 detection 新增 `corners_3d` 和 `box_type_3d: "LiDAR"`。
+  - `render_image_visualization(...)` 增加 `calib_path` 入参，收到上传 calib 时优先用上传 calib。
+
+- `F:/YOLO/kitty/fastapi_realtime_infer/app/main.py`
+  - `/predict` 新增 `calib_file` multipart 参数。
+  - 校验 txt 后写入临时文件，传给 detector 渲染。
+
+- `F:/YOLO/kitty/fastapi_realtime_infer/app/schemas.py`
+  - `Detection` 响应模型新增 `corners_3d`、`box_type_3d`。
+
+- `F:/YOLO/kitty/fastapi_realtime_infer/app/settings.py`
+  - fallback 数据集根改为 `KITTI_DATASET_ROOT` 或相对 `PROJECT_ROOT/data/kitti`。
+  - 去掉 8000 端内部对 `F:\YOLO\kitty\testing` 的硬编码依赖。
+
+### 验证
+
+- 后端：`mvn.cmd -q -DskipTests compile` 通过。
+- 前端：`C:\Program Files\nodejs\npm.cmd run build` 通过。
+- Python 服务语法检查当前会话没有可用 `python/py` 解释器，未单独执行 `py_compile`；但接口改动已按现有 FastAPI/Pydantic 结构落地。
+
+### 迁移说明
+
+- 推荐数据集目录结构：
+  - `kitti/training/image_2`
+  - `kitti/training/velodyne`
+  - `kitti/training/calib`
+  - `kitti/testing/image_2`
+  - `kitti/testing/velodyne`
+  - `kitti/testing/calib`
+- 如果数据集放在仓库旁边的 `../kitti` 或仓库内的 `data/kitti`，后端可自动发现。
+- 如果数据集放在任意其他位置，设置：
+  - 环境变量 `KITTI_DATASET_ROOT`
+  - 或 Spring local 配置 `detection.kitti-dataset-root`
+- 修改 8000 端 FastAPI 代码后需要重启 MMDet3D 服务，否则 `corners_3d` 和 `calib_file` 不会生效。

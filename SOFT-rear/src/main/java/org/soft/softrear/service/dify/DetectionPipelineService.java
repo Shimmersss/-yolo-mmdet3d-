@@ -58,7 +58,7 @@ public class DetectionPipelineService {
     @Value("${detection.mmdet3d-base-url:http://127.0.0.1:8000}")
     private String mmdet3dBaseUrl;
 
-    @Value("${detection.kitti-dataset-root:F:/YOLO/kitty/testing}")
+    @Value("${detection.kitti-dataset-root:}")
     private String kittiDatasetRoot;
 
     public DetectionPipelineService(DifyWorkflowService difyWorkflowService) {
@@ -261,7 +261,7 @@ public class DetectionPipelineService {
     }
 
     private KittiSampleFiles resolveKittiSampleFiles(String stem, String imagePathHint) {
-        Path root = Paths.get(kittiDatasetRoot).toAbsolutePath().normalize();
+        Path root = resolveKittiDatasetRoot();
         LinkedHashSet<Path> imageCandidates = new LinkedHashSet<>();
 
         Path hintedPath = resolveHintedPath(root, imagePathHint);
@@ -273,7 +273,9 @@ public class DetectionPipelineService {
             }
         }
 
-        imageCandidates.addAll(findImageCandidates(root, stem));
+        for (Path searchRoot : preferredKittiRoots(root)) {
+            imageCandidates.addAll(findImageCandidates(searchRoot, stem));
+        }
 
         for (Path imagePath : imageCandidates) {
             KittiSampleFiles sampleFiles = resolveSampleFilesFromImage(root, imagePath, stem);
@@ -283,6 +285,78 @@ public class DetectionPipelineService {
         }
 
         throw new IllegalArgumentException("Missing KITTI sample for stem " + stem + " under " + root);
+    }
+
+    private Path resolveKittiDatasetRoot() {
+        List<Path> candidates = new ArrayList<>();
+        Path cwd = Paths.get("").toAbsolutePath().normalize();
+        Path repoRoot = cwd.getParent() != null && cwd.getFileName() != null && "SOFT-rear".equalsIgnoreCase(cwd.getFileName().toString())
+                ? cwd.getParent()
+                : cwd;
+
+        if (StringUtils.hasText(kittiDatasetRoot)) {
+            candidates.addAll(resolvePortablePathCandidates(kittiDatasetRoot, cwd, repoRoot));
+        }
+
+        for (String relative : List.of("kitti", "data/kitti", "../kitti", "../data/kitti", "../kitty", "../data/kitty")) {
+            candidates.addAll(resolvePortablePathCandidates(relative, cwd, repoRoot));
+        }
+
+        for (Path candidate : candidates) {
+            if (isKittiRoot(candidate)) {
+                return candidate;
+            }
+        }
+        String checked = candidates.stream().map(Path::toString).distinct().toList().toString();
+        throw new IllegalArgumentException("KITTI dataset root not found. Set KITTI_DATASET_ROOT or detection.kitti-dataset-root. Checked: " + checked);
+    }
+
+    private List<Path> resolvePortablePathCandidates(String value, Path cwd, Path repoRoot) {
+        String normalizedValue = value.trim().replace('\\', '/');
+        if (!StringUtils.hasText(normalizedValue)) {
+            return List.of();
+        }
+        try {
+            Path raw = Paths.get(normalizedValue);
+            if (raw.isAbsolute()) {
+                return List.of(raw.normalize());
+            }
+            return List.of(
+                    cwd.resolve(raw).normalize(),
+                    repoRoot.resolve(raw).normalize()
+            );
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private boolean isKittiRoot(Path path) {
+        if (path == null || !Files.isDirectory(path)) {
+            return false;
+        }
+        if (Files.isDirectory(path.resolve("image_2"))
+                && Files.isDirectory(path.resolve("velodyne"))
+                && Files.isDirectory(path.resolve("calib"))) {
+            return true;
+        }
+        return (Files.isDirectory(path.resolve("training").resolve("image_2"))
+                || Files.isDirectory(path.resolve("testing").resolve("image_2")));
+    }
+
+    private List<Path> preferredKittiRoots(Path root) {
+        List<Path> roots = new ArrayList<>();
+        Path training = root.resolve("training").normalize();
+        Path testing = root.resolve("testing").normalize();
+        if (Files.isDirectory(training)) {
+            roots.add(training);
+        }
+        if (Files.isDirectory(testing)) {
+            roots.add(testing);
+        }
+        if (roots.isEmpty() || roots.stream().noneMatch(root::equals)) {
+            roots.add(root);
+        }
+        return roots.stream().distinct().toList();
     }
 
     private Path resolveHintedPath(Path root, String imagePathHint) {

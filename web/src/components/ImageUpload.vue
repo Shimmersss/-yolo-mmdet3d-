@@ -59,6 +59,18 @@
     </template>
 
     <template v-else>
+      <div class="mode-row dataset-row">
+        <span class="mode-label">KITTI 数据集</span>
+        <div class="mode-tabs">
+          <button type="button" class="mode-tab" :class="{ active: kittiSplit === 'training' }" @click="setKittiSplit('training')">
+            training
+          </button>
+          <button type="button" class="mode-tab" :class="{ active: kittiSplit === 'testing' }" @click="setKittiSplit('testing')">
+            testing
+          </button>
+        </div>
+      </div>
+
       <label class="drop-zone" :class="{ dragging: isDraggingImage }" @dragover.prevent="isDraggingImage = true" @dragleave.prevent="isDraggingImage = false" @drop.prevent="handleImageDrop">
         <input type="file" accept="image/*" @change="handleImageFileChange">
         <span class="upload-icon">+</span>
@@ -156,6 +168,7 @@ const mode = ref('yolo')
 const conf = ref(0.25)
 const iou = ref(0.45)
 const scoreThr = ref(0.3)
+const kittiSplit = ref('training')
 const missionContext = ref('')
 const droneId = ref('demo-drone-001')
 const loading = ref(false)
@@ -263,7 +276,23 @@ const setImageFile = (file) => {
     return
   }
   imageFile.value = file
-  imagePathHint.value = file.webkitRelativePath || file.name || ''
+  imagePathHint.value = buildImagePathHint(file)
+  resetResult()
+}
+
+const buildImagePathHint = (file) => {
+  const relativePath = file.webkitRelativePath || ''
+  if (relativePath.includes('/')) {
+    return relativePath
+  }
+  return `${kittiSplit.value}/image_2/${file.name || ''}`
+}
+
+const setKittiSplit = (split) => {
+  kittiSplit.value = split
+  if (imageFile.value) {
+    imagePathHint.value = buildImagePathHint(imageFile.value)
+  }
   resetResult()
 }
 
