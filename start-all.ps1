@@ -11,18 +11,37 @@ $frontendDir = Join-Path $root 'web'
 $runDir = Join-Path $root '.run'
 $metaFile = Join-Path $runDir 'dev-processes.json'
 
-$jdkHome = 'C:\Program Files\Eclipse Adoptium\jdk-17.0.18.8-hotspot'
+$jdkCandidates = @(
+  'E:\BD\IntelliJ IDEA 2023.3.4\jbr',
+  'C:\Users\Shienroxic\.jdks\openjdk-21.0.2'
+)
+$jdkHome = $jdkCandidates | Where-Object { Test-Path (Join-Path $_ 'bin\java.exe') } | Select-Object -First 1
 $nodeBin = 'C:\Program Files\nodejs'
+$mavenHome = Join-Path (Split-Path -Parent $root) 'apache-maven-3.9.12'
+$mavenSettings = Join-Path $backendDir 'build-support\maven-global-settings.xml'
+
+if (-not $jdkHome) { throw "Java not found. Checked: $($jdkCandidates -join ', ')" }
 
 $javaExe = Join-Path $jdkHome 'bin\java.exe'
+
 $nodeExe = Join-Path $nodeBin 'node.exe'
 $npmCmd = Join-Path $nodeBin 'npm.cmd'
+$mvnCmd = Join-Path $mavenHome 'bin\mvn.cmd'
+
+if (!(Test-Path $mvnCmd)) {
+  $mvnCommand = Get-Command mvn.cmd -ErrorAction SilentlyContinue
+  if ($mvnCommand) {
+    $mvnCmd = $mvnCommand.Source
+  }
+}
 
 if (!(Test-Path $backendDir)) { throw "Backend directory not found: $backendDir" }
 if (!(Test-Path $frontendDir)) { throw "Frontend directory not found: $frontendDir" }
-if (!(Test-Path $javaExe)) { throw "Java 17 not found: $javaExe" }
+if (!(Test-Path $javaExe)) { throw "Java not found. Checked: $($jdkCandidates -join ', ')" }
 if (!(Test-Path $nodeExe)) { throw "Node.js not found: $nodeExe" }
 if (!(Test-Path $npmCmd)) { throw "npm not found: $npmCmd" }
+if (!(Test-Path $mvnCmd)) { throw "Maven not found: $mvnCmd" }
+if (!(Test-Path $mavenSettings)) { throw "Maven settings not found: $mavenSettings" }
 
 if ($TimeoutSec -lt 5) { $TimeoutSec = 5 }
 if ($PollIntervalMs -lt 200) { $PollIntervalMs = 200 }
@@ -38,8 +57,9 @@ $backendCommand = @"
 `$env:JAVA_HOME = '$jdkHome'
 `$javaBin = Join-Path `$env:JAVA_HOME 'bin'
 `$env:Path = `$javaBin + ';' + `$env:Path
+`$env:SPRING_PROFILES_ACTIVE = 'local'
 Set-Location '$backendDir'
-.\mvnw.cmd spring-boot:run
+& '$mvnCmd' -gs '$mavenSettings' -DskipTests spring-boot:run
 "@
 
 $frontendCommand = @"

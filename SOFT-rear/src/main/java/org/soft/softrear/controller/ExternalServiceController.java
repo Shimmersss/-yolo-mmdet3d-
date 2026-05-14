@@ -1,88 +1,104 @@
 package org.soft.softrear.controller;
 
+import org.soft.softrear.config.DifyProperties;
 import org.soft.softrear.pojo.ResponseMessage;
-import org.springframework.web.bind.annotation.*;
+import org.soft.softrear.pojo.dto.dify.DronePipelineResult;
+import org.soft.softrear.service.dify.DetectionPipelineService;
+import org.soft.softrear.service.dify.DifyWorkflowService;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/external")
 public class ExternalServiceController {
-    
-    // Python图像处理服务地址
-    private static final String PYTHON_SERVICE_URL = "http://localhost:5000/process";
-    
-    // Dify本地服务地址
-    private static final String DIFY_SERVICE_URL = "http://localhost:8000/api/v1/chat/completions";
-    
-    @PostMapping("/python/process-image")
-    public ResponseMessage<Map<String, Object>> processImageWithPython(@RequestBody Map<String, Object> request) {
+
+    private final DetectionPipelineService detectionPipelineService;
+    private final DifyWorkflowService difyWorkflowService;
+    private final DifyProperties difyProperties;
+
+    public ExternalServiceController(DetectionPipelineService detectionPipelineService,
+                                     DifyWorkflowService difyWorkflowService,
+                                     DifyProperties difyProperties) {
+        this.detectionPipelineService = detectionPipelineService;
+        this.difyWorkflowService = difyWorkflowService;
+        this.difyProperties = difyProperties;
+    }
+
+    @GetMapping("/dify/status")
+    public ResponseMessage<Map<String, Object>> getDifyStatus() {
+        Map<String, Object> status = new HashMap<>();
+        status.put("enabled", difyProperties.isEnabled());
+        status.put("baseUrl", difyProperties.getBaseUrl());
+        status.put("apiKeyConfigured", StringUtils.hasText(difyProperties.getApiKey()));
+        status.put("workflowIdConfigured", StringUtils.hasText(difyProperties.getWorkflowId()));
+        status.put("workflowUserPrefix", difyProperties.getWorkflowUserPrefix());
+        return ResponseMessage.success(status);
+    }
+
+    @PostMapping("/dify/drone-pipeline")
+    public ResponseMessage<DronePipelineResult> runDronePipeline(
+            @RequestParam("mediaType") String mediaType,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "imageFile", required = false) MultipartFile imageFile,
+            @RequestParam(value = "calibFile", required = false) MultipartFile calibFile,
+            @RequestParam(value = "imagePathHint", required = false) String imagePathHint,
+            @RequestParam(value = "conf", required = false) Double conf,
+            @RequestParam(value = "iou", required = false) Double iou,
+            @RequestParam(value = "scoreThr", required = false) Double scoreThr,
+            @RequestParam(value = "missionContext", required = false) String missionContext,
+            @RequestParam(value = "droneId", required = false) String droneId) {
         try {
-            String imagePath = (String) request.get("imagePath");
-            String processType = (String) request.get("processType");
-            
-            // 这里调用Python服务
-            // 实际项目中应该使用HttpClient调用
-            String result = "Python处理结果: " + processType + " - " + imagePath;
-            
-            Map<String, Object> response = new HashMap<>();
-            response.put("result", result);
-            response.put("service", "python-image-processing");
-            
-            return ResponseMessage.success(response);
+            return ResponseMessage.success(detectionPipelineService.run(
+                    mediaType,
+                    file,
+                    imageFile,
+                    calibFile,
+                    imagePathHint,
+                    conf,
+                    iou,
+                    scoreThr,
+                    missionContext,
+                    droneId
+            ));
+        } catch (IllegalArgumentException e) {
+            return new ResponseMessage<>(400, e.getMessage(), null);
         } catch (Exception e) {
             e.printStackTrace();
-            return new ResponseMessage<>(500, "Python服务调用失败", null);
+            return new ResponseMessage<>(500, "Drone pipeline failed: " + e.getMessage(), null);
         }
     }
-    
+
     @PostMapping("/dify/chat")
     public ResponseMessage<Map<String, Object>> chatWithDify(@RequestBody Map<String, Object> request) {
-        try {
-            String message = (String) request.get("message");
-            String userId = (String) request.get("userId");
-            
-            // 这里调用Dify服务
-            // 实际项目中应该使用HttpClient调用
-            String response = "Dify回复: " + message;
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("response", response);
-            result.put("service", "dify-chat");
-            result.put("userId", userId);
-            
-            return ResponseMessage.success(result);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return new ResponseMessage<>(500, "Dify服务调用失败", null);
-        }
+        String message = String.valueOf(request.getOrDefault("message", ""));
+        String userId = String.valueOf(request.getOrDefault("userId", "demo-user"));
+
+        Map<String, Object> inputs = new HashMap<>();
+        inputs.put("media_url", String.valueOf(request.getOrDefault("mediaUrl", "chat-only")));
+        inputs.put("media_type", String.valueOf(request.getOrDefault("mediaType", "image")));
+        inputs.put("mission_context", message);
+        inputs.put("drone_id", String.valueOf(request.getOrDefault("droneId", "demo-drone-001")));
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("response", "Dify workflow result");
+        response.put("dify", difyWorkflowService.runWorkflow(inputs, userId));
+        return ResponseMessage.success(response);
     }
-    
-    // 辅助方法：调用HTTP服务
-    private String callHttpService(String serviceUrl, String requestBody) throws IOException {
-        URL url = new URL(serviceUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setDoOutput(true);
-        
-        conn.getOutputStream().write(requestBody.getBytes());
-        
-        BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-        StringBuilder response = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            response.append(line);
-        }
-        reader.close();
-        conn.disconnect();
-        
-        return response.toString();
+
+    @PostMapping("/python/process-image")
+    public ResponseMessage<Map<String, Object>> processImageWithPython(@RequestBody Map<String, Object> request) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("result", "Python service placeholder: " + request.get("processType") + " - " + request.get("imagePath"));
+        response.put("service", "python-image-processing");
+        return ResponseMessage.success(response);
     }
 }
